@@ -17,7 +17,8 @@ bot = AsyncTeleBot(BOT_TOKEN)
 # Initialize firebase
 firebase_config = json.loads(os.environ.get('FIREBASE_SERVICE_ACCOUNT'))
 cred = credentials.Certificate(firebase_config)
-firebase_admin.initialize_app(cred, {'storageBucket':  'afri-cloud-app.appspot.com'})
+firebase_admin.initialize_app(cred, {'storageBucket': 'afri-cloud-app.appspot.com'})
+
 db = firestore.client()
 bucket = storage.bucket()
 
@@ -43,7 +44,7 @@ async def start(message):
     )
 
     try:
-        user_ref = db.collection('user').document(user_id)
+        user_ref = db.collection('users').document(user_id)
         user_doc = user_ref.get()
 
         if not user_doc.exists:
@@ -59,10 +60,11 @@ async def start(message):
                 if response.status_code == 200:
                     # Upload image to firebase storage
                     blob = bucket.blob(f"user_image/{user_id}.jpg")
-                    blob.upload_from_string(response.content, content_types='image/jpeg')
+                    blob.upload_from_string(response.content, content_type='image/jpeg')
+
 
                     # Generate the correct URL
-                    user_image = blob.generate_signd_url(datetime.timedelta(days=365), method='GET')
+                    user_image = blob.generate_signed_url(datetime.timedelta(days=365), method='GET')
                 else:
                     user_image = None
             else:
@@ -128,11 +130,12 @@ async def start(message):
     except Exception as e:
         error_message = "Error. please try again"
         await bot.reply_to(message, error_message)
-        print(f"Error: {str(e)}")
+        import logging 
+        logging.error(f"Error: {e}")
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        content_length = int(self.headers['content-Length'])
+        content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length)
         update_dict = json.loads(post_data.decode('utf.8'))
 
