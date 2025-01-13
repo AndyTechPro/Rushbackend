@@ -14,7 +14,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 bot = AsyncTeleBot(BOT_TOKEN)
 
-# Initialize firebase
+# Initialize Firebase
 firebase_config = json.loads(os.environ.get('FIREBASE_SERVICE_ACCOUNT'))
 cred = credentials.Certificate(firebase_config)
 firebase_admin.initialize_app(cred, {'storageBucket': 'afri-cloud-app.appspot.com'})
@@ -31,10 +31,10 @@ def generate_start_keyboard():
 async def start(message):
     user_id = str(message.from_user.id)
     user_first_name = str(message.from_user.first_name)
-    user_last_name = message.from_user.last_name
-    user_username = message.from_user.username
-    user_language_code = str(message.from_user.language_code)
-    is_premium = message.from_user.is_premium
+    user_last_name = message.from_user.last_name or ""
+    user_username = message.from_user.username or ""
+    user_language_code = str(message.from_user.language_code or "en")
+    is_premium = getattr(message.from_user, 'is_premium', False)
     text = message.text.split()
     welcome_message = (
         f"Hi, {user_first_name}! 👋\n\n"
@@ -49,26 +49,18 @@ async def start(message):
 
         if not user_doc.exists:
             photos = await bot.get_user_profile_photos(user_id, limit=1)
+            user_image = None
             if photos.total_count > 0:
                 file_id = photos.photos[0][-1].file_id
                 file_info = await bot.get_file(file_id)
                 file_path = file_info.file_path
                 file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
-                
-                # Download the image 
+
                 response = requests.get(file_url)
                 if response.status_code == 200:
-                    # Upload image to firebase storage
                     blob = bucket.blob(f"user_image/{user_id}.jpg")
                     blob.upload_from_string(response.content, content_type='image/jpeg')
-
-
-                    # Generate the correct URL
                     user_image = blob.generate_signed_url(datetime.timedelta(days=365), method='GET')
-                else:
-                    user_image = None
-            else:
-                user_image = None
 
             user_data = {
                 'userImage': user_image,
@@ -96,48 +88,32 @@ async def start(message):
 
                 if referrer_doc.exists:
                     user_data['referredBy'] = referrer_id
-
                     referrer_data = referrer_doc.to_dict()
-
                     bonus_amount = 500 if is_premium else 100
 
-                    current_balance = referrer_data.get('balance', {})
-                    new_balance = current_balance + bonus_amount
-
-                    referrals = referrer_data.get('referrals', {})
-                    if referrals is None:
-                        referrals = {}
-                    referrals[user_id] = {
-                        'addedValue': bonus_amount,
-                        'firstName': user_first_name,
-                        'lastName': user_last_name,
-                        'userImage': user_image, 
-                    }
-
                     referrer_ref.update({
-                        'balance': new_balance,
-                        'referrals': referrals
-                    })                  
-                else:
-                    user_data['referredBy'] = None
-            else:
-                        user_data['referredBy'] = None
-
+                        'balance': firestore.Increment(bonus_amount),
+                        'referrals': {**referrer_data.get('referrals', {}), user_id: {
+                            'addedValue': bonus_amount,
+                            'firstName': user_first_name,
+                            'lastName': user_last_name,
+                            'userImage': user_image,
+                        }}
+                    })
             user_ref.set(user_data)
 
         keyboard = generate_start_keyboard()
         await bot.reply_to(message, welcome_message, reply_markup=keyboard)
     except Exception as e:
-        error_message = "Error. please try again"
-        await bot.reply_to(message, error_message)
-        import logging 
-        logging.error(f"Error: {e}")
+        await bot.reply_to(message, "Error. please try again")
+        import traceback
+        print(f"Error: {traceback.format_exc()}")
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length)
-        update_dict = json.loads(post_data.decode('utf.8'))
+        update_dict = json.loads(post_data.decode('utf-8'))
 
         asyncio.run(self.process_update(update_dict))
 
